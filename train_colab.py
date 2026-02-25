@@ -2,16 +2,21 @@
 Colab/Kaggle Training Wrapper for Pix2Pix GAN
 =============================================
 
-Usage in Google Colab or Kaggle:
+Usage in Google Colab:
 
-1. Upload this file + train.py + models.py + dataset.py + requirements.txt
-2. Upload your dataset zip (ut-zap50k-images-square.zip)
-3. Run this script
+Cell 1:
+    from google.colab import drive
+    drive.mount('/content/drive')
+
+Cell 2:
+    !git clone https://github.com/jrajala6/jisha-pix2pix-gan.git
+    %cd jisha-pix2pix-gan
+    !python train_colab.py
 
 This wrapper:
-- Mounts Google Drive for persistent checkpoint storage (Colab)
-- Auto-resumes from the latest checkpoint if disconnected
-- Saves checkpoints every 5 epochs to Drive
+- Uses Google Drive for persistent checkpoint storage (Colab)
+- Auto-resumes from latest.pth if session disconnects
+- Syncs checkpoints + samples to Drive after training
 """
 
 import os
@@ -60,13 +65,20 @@ def setup_kaggle():
     return work_dir
 
 
-def install_deps():
-    """Install required packages"""
-    subprocess.run([
-        sys.executable, '-m', 'pip', 'install', '-q',
-        'torch', 'torchvision', 'numpy', 'opencv-python',
-        'scipy', 'pandas', 'matplotlib', 'tqdm', 'Pillow', 'tensorboard'
-    ], check=True)
+def install_deps(platform):
+    """Install required packages (skip torch on Colab — already CUDA-matched)"""
+    if platform == 'colab':
+        # Colab already has CUDA-matched PyTorch; only install extras
+        subprocess.run([
+            sys.executable, '-m', 'pip', 'install', '-q',
+            'opencv-python', 'scipy', 'pandas', 'matplotlib', 'tqdm', 'Pillow', 'tensorboard'
+        ], check=True)
+    else:
+        subprocess.run([
+            sys.executable, '-m', 'pip', 'install', '-q',
+            'torch', 'torchvision', 'numpy', 'opencv-python',
+            'scipy', 'pandas', 'matplotlib', 'tqdm', 'Pillow', 'tensorboard'
+        ], check=True)
 
 
 def clone_repo(work_dir):
@@ -82,58 +94,147 @@ def clone_repo(work_dir):
 
 
 def find_latest_checkpoint(checkpoint_dir):
-    """Find the latest checkpoint to resume from"""
-    checkpoints = glob.glob(os.path.join(checkpoint_dir, 'checkpoint_epoch_*.pth'))
-    if not checkpoints:
+    """Find the latest checkpoint to resume from.
+
+    Priority: latest.pth > highest epoch_XXX.pth > best.pth
+    """
+    if not os.path.isdir(checkpoint_dir):
         return None
 
-    # Extract epoch numbers and find the latest
-    def get_epoch(path):
-        basename = os.path.basename(path)
-        try:
-            return int(basename.split('_')[-1].replace('.pth', ''))
-        except ValueError:
-            return -1
+    # First try latest.pth (always the most recent)
+    latest = os.path.join(checkpoint_dir, 'latest.pth')
+    if os.path.exists(latest):
+        print(f"  Found latest.pth to resume from")
+        return latest
 
-    checkpoints.sort(key=get_epoch)
-    latest = checkpoints[-1]
-    print(f"Found checkpoint to resume from: {latest}")
-    return latest
+    # Then try epoch files (epoch_000.pth, epoch_005.pth, ...)
+    epoch_files = glob.glob(os.path.join(checkpoint_dir, 'epoch_*.pth'))
+    if epoch_files:
+        def get_epoch_num(path):
+            basename = os.path.basename(path)
+            try:
+                return int(basename.replace('epoch_', '').replace('.pth', ''))
+            except ValueError:
+                return -1
+
+        epoch_files.sort(key=get_epoch_num)
+        best_epoch = epoch_files[-1]
+        print(f"  Found {os.path.basename(best_epoch)} to resume from")
+        return best_epoch
+
+    # Last resort: best.pth
+    best = os.path.join(checkpoint_dir, 'best.pth')
+    if os.path.exists(best):
+        print(f"  Found best.pth to resume from")
+        return best
+
+    return None
 
 
-def sync_checkpoints_to_drive(local_dir, drive_dir):
-    """Copy checkpoints to Google Drive for persistence"""
-    if drive_dir and os.path.exists(drive_dir):
-        for f in glob.glob(os.path.join(local_dir, '*.pth')):
-            dst = os.path.join(drive_dir, os.path.basename(f))
-            if not os.path.exists(dst):
+def sync_files(src_dir, dst_dir, patterns=None):
+    """Copy files matching patterns from src to dst for persistence.
+
+    Args:
+        src_dir: Local directory to copy from
+        dst_dir: Drive directory to copy to
+        patterns: List of glob patterns (default: common training outputs)
+    """
+    if not dst_dir or not os.path.exists(src_dir):
+        return
+
+    if patterns is None:
+        patterns = ['*.pth', '*.png', '*.jpg', 'events*']
+
+    os.makedirs(dst_dir, exist_ok=True)
+    synced = 0
+    for pattern in patterns:
+        for f in glob.glob(os.path.join(src_dir, pattern)):
+            dst = os.path.join(dst_dir, os.path.basename(f))
+            # Always overwrite latest.pth and best.pth, skip others if exist
+            basename = os.path.basename(f)
+            if basename in ('latest.pth', 'best.pth') or not os.path.exists(dst):
                 shutil.copy2(f, dst)
-                print(f"Synced {os.path.basename(f)} to Drive")
+                synced += 1
+
+    if synced > 0:
+        print(f"  Synced {synced} files to {dst_dir}")
+
+
+def check_dataset(dataset_dir, drive_dir=None):
+    """Check that both images and metadata exist. Returns True if ready."""
+    images_ok = any(
+        os.path.isdir(os.path.join(dataset_dir, d))
+        for d in ['Boots', 'Sandals', 'Shoes', 'Slippers']
+    )
+    metadata_dir = os.path.join(dataset_dir, 'ut-zap50k-data')
+    metadata_ok = (
+        os.path.exists(os.path.join(metadata_dir, 'image-path.mat')) and
+        os.path.exists(os.path.join(metadata_dir, 'meta-data-bin.csv'))
+    )
+
+    if images_ok and metadata_ok:
+        return True
+
+    # Try to find and extract zip
+    zip_locations = [
+        'ut-zap50k-images-square.zip',
+        '../ut-zap50k-images-square.zip',
+        '/content/ut-zap50k-images-square.zip',
+        '/kaggle/input/ut-zap50k-images-square/ut-zap50k-images-square.zip',
+    ]
+    if drive_dir:
+        zip_locations.append(f'{drive_dir}/ut-zap50k-images-square.zip')
+
+    for zip_path in zip_locations:
+        if os.path.exists(zip_path):
+            print(f"  Extracting dataset from {zip_path}...")
+            subprocess.run(['unzip', '-q', '-o', zip_path, '-d', '.'], check=True)
+            # Re-check after extraction
+            return check_dataset(dataset_dir, drive_dir=None)
+
+    # Check Kaggle inputs
+    kaggle_input = '/kaggle/input'
+    if os.path.exists(kaggle_input):
+        for d in os.listdir(kaggle_input):
+            potential = os.path.join(kaggle_input, d, 'ut-zap50k-images-square')
+            if os.path.exists(potential):
+                if not os.path.exists(dataset_dir):
+                    os.symlink(potential, dataset_dir)
+                print(f"  Linked Kaggle dataset from {potential}")
+                return check_dataset(dataset_dir, drive_dir=None)
+
+    # Print what's missing
+    if not images_ok:
+        print("  ❌ Image folders (Boots/Sandals/Shoes/Slippers) not found")
+    if not metadata_ok:
+        print("  ❌ Metadata (ut-zap50k-data/image-path.mat, meta-data-bin.csv) not found")
+    print("\n  Please upload ut-zap50k-images-square.zip containing both images and ut-zap50k-data/")
+
+    return False
 
 
 def main():
     platform = detect_platform()
-    print(f"Platform detected: {platform}")
+    print(f"Platform: {platform}")
     print("=" * 50)
 
     # Platform-specific setup
+    drive_dir = None
     if platform == 'colab':
         print("Setting up Google Colab...")
         drive_dir = setup_colab()
         work_dir = '/content'
     elif platform == 'kaggle':
         print("Setting up Kaggle...")
-        drive_dir = None
         work_dir = '/kaggle/working'
         setup_kaggle()
     else:
         print("Running locally...")
-        drive_dir = None
         work_dir = '.'
 
-    # Install dependencies
+    # Install dependencies (skip torch on Colab)
     print("\nInstalling dependencies...")
-    install_deps()
+    install_deps(platform)
 
     # Clone repo
     print("\nCloning repository...")
@@ -141,45 +242,13 @@ def main():
     os.chdir(repo_dir)
     print(f"Working directory: {os.getcwd()}")
 
-    # Check for dataset
+    # Check dataset (images + metadata)
     dataset_dir = 'ut-zap50k-images-square'
-    if not os.path.exists(dataset_dir):
-        # Check for zip file in common locations
-        zip_locations = [
-            'ut-zap50k-images-square.zip',
-            '../ut-zap50k-images-square.zip',
-            '/content/ut-zap50k-images-square.zip',
-            '/kaggle/input/ut-zap50k-images-square/ut-zap50k-images-square.zip',
-        ]
-        if drive_dir:
-            zip_locations.append(f'{drive_dir}/ut-zap50k-images-square.zip')
+    print(f"\nChecking dataset...")
+    if not check_dataset(dataset_dir, drive_dir):
+        return
 
-        found = False
-        for zip_path in zip_locations:
-            if os.path.exists(zip_path):
-                print(f"\nExtracting dataset from {zip_path}...")
-                subprocess.run(['unzip', '-q', zip_path, '-d', '.'], check=True)
-                found = True
-                break
-
-        # Also check if dataset is a Kaggle dataset
-        kaggle_input = '/kaggle/input'
-        if not found and os.path.exists(kaggle_input):
-            for d in os.listdir(kaggle_input):
-                potential = os.path.join(kaggle_input, d, 'ut-zap50k-images-square')
-                if os.path.exists(potential):
-                    os.symlink(potential, dataset_dir)
-                    found = True
-                    print(f"Linked Kaggle dataset from {potential}")
-                    break
-
-        if not found:
-            print("\n⚠️  Dataset not found! Please upload ut-zap50k-images-square.zip")
-            print("  For Colab: Upload to /content/ or Google Drive")
-            print("  For Kaggle: Add as a dataset input")
-            return
-
-    print(f"\n✅ Dataset found: {dataset_dir}")
+    print(f"✅ Dataset ready: {dataset_dir}")
 
     # Check GPU
     import torch
@@ -194,16 +263,17 @@ def main():
     checkpoint_dir = './checkpoints'
     resume_from = None
 
-    # First check drive for checkpoints (Colab)
+    # First check Drive for checkpoints (Colab)
     if drive_dir:
         drive_ckpt_dir = f'{drive_dir}/checkpoints'
-        resume_from = find_latest_checkpoint(drive_ckpt_dir)
-        if resume_from:
-            # Copy checkpoint locally
-            local_copy = os.path.join(checkpoint_dir, os.path.basename(resume_from))
+        drive_ckpt = find_latest_checkpoint(drive_ckpt_dir)
+        if drive_ckpt:
+            # Copy checkpoint locally for resume
             os.makedirs(checkpoint_dir, exist_ok=True)
-            shutil.copy2(resume_from, local_copy)
+            local_copy = os.path.join(checkpoint_dir, os.path.basename(drive_ckpt))
+            shutil.copy2(drive_ckpt, local_copy)
             resume_from = local_copy
+            print(f"  Copied from Drive: {os.path.basename(drive_ckpt)}")
 
     # Also check local checkpoints
     if not resume_from:
@@ -224,11 +294,10 @@ def main():
 
     if resume_from:
         cmd.extend(['--resume_from', resume_from])
-        print(f"\n🔄 Resuming from: {resume_from}")
+        print(f"\n🔄 Resuming from: {os.path.basename(resume_from)}")
 
     print(f"\n{'='*50}")
     print("Starting training...")
-    print(f"Command: {' '.join(cmd)}")
     print(f"{'='*50}\n")
 
     # Run training
@@ -240,17 +309,19 @@ def main():
         print("\nTraining interrupted! Checkpoints are saved.")
         process.terminate()
     finally:
-        # Sync checkpoints to Drive (Colab)
+        # Sync to Drive (Colab)
         if drive_dir:
-            print("\nSyncing checkpoints to Google Drive...")
-            sync_checkpoints_to_drive(checkpoint_dir, f'{drive_dir}/checkpoints')
-            sync_checkpoints_to_drive('./samples', f'{drive_dir}/samples')
-            print("✅ Checkpoints synced to Drive!")
+            print("\nSyncing to Google Drive...")
+            sync_files(checkpoint_dir, f'{drive_dir}/checkpoints', ['*.pth'])
+            sync_files('./samples', f'{drive_dir}/samples', ['*.png', '*.jpg'])
+            sync_files('./logs', f'{drive_dir}/logs', ['events*'])
+            print("✅ All outputs synced to Drive!")
 
     print("\n✅ Training complete!")
     if drive_dir:
-        print(f"Checkpoints saved to: {drive_dir}/checkpoints/")
-        print(f"Samples saved to: {drive_dir}/samples/")
+        print(f"  Checkpoints: {drive_dir}/checkpoints/")
+        print(f"  Samples: {drive_dir}/samples/")
+        print(f"  Logs: {drive_dir}/logs/")
 
 
 if __name__ == '__main__':
