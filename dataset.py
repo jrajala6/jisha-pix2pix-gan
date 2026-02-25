@@ -65,6 +65,7 @@ class ZapposDataset(Dataset):
 
         # Load and process data
         self._load_image_paths()
+        self._filter_missing_images()
         self._load_attributes(min_attribute_freq, attribute_prefixes)
         self._create_split(train_ratio)
 
@@ -114,6 +115,25 @@ class ZapposDataset(Dataset):
         except Exception as e:
             raise Exception(f"Error loading image paths: {e}")
 
+    def _filter_missing_images(self):
+        """Remove entries where the image file doesn't exist on disk"""
+        valid_indices = []
+        missing = 0
+        for i, rel_path in enumerate(self.image_paths):
+            full_path = os.path.join(self.data_root, rel_path)
+            if os.path.exists(full_path):
+                valid_indices.append(i)
+            else:
+                missing += 1
+
+        if missing > 0:
+            self.image_paths = [self.image_paths[i] for i in valid_indices]
+            self.valid_indices = valid_indices  # Track for attribute alignment
+            print(f"Filtered out {missing} missing images ({100*missing/(missing+len(valid_indices)):.1f}%), {len(self.image_paths)} remaining")
+        else:
+            self.valid_indices = None
+            print("All image paths verified — no missing files")
+
     def _load_attributes(self, min_freq: int, prefixes: Optional[List[str]]):
         """Load and filter attributes from CSV file"""
         # Look for meta-data-bin.csv in ut-zap50k-data subdirectory
@@ -126,6 +146,10 @@ class ZapposDataset(Dataset):
             print(f"Loaded attributes CSV with {len(self.attributes_df)} rows and {len(self.attributes_df.columns)} columns")
         except Exception as e:
             raise Exception(f"Error loading attributes CSV: {e}")
+
+        # Align attributes with filtered image paths
+        if self.valid_indices is not None:
+            self.attributes_df = self.attributes_df.iloc[self.valid_indices].reset_index(drop=True)
 
         # Ensure we have the same number of samples
         n_images = len(self.image_paths)
@@ -229,9 +253,8 @@ class ZapposDataset(Dataset):
         try:
             image = Image.open(img_path).convert('RGB')
         except (FileNotFoundError, OSError):
-            # Fallback to a default image or skip
-            print(f"Warning: Could not load image {img_path}, using black image")
-            image = Image.new('RGB', (self.image_size, self.image_size), color='black')
+            # Shouldn't happen after pre-filtering, but fallback to a random valid sample
+            return self.__getitem__((idx + 1) % len(self))
 
         # Convert to numpy for edge detection
         image_np = np.array(image)
