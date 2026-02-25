@@ -82,9 +82,12 @@ def install_deps(platform):
 
 
 def clone_repo(work_dir):
-    """Clone the repo if not already present"""
+    """Clone the repo, or pull latest if already cloned"""
     repo_dir = os.path.join(work_dir, 'jisha-pix2pix-gan')
-    if not os.path.exists(repo_dir):
+    if os.path.exists(repo_dir):
+        print("  Repo exists, pulling latest changes...")
+        subprocess.run(['git', 'pull'], cwd=repo_dir, check=True)
+    else:
         subprocess.run([
             'git', 'clone',
             'https://github.com/jrajala6/jisha-pix2pix-gan.git',
