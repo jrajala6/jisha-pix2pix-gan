@@ -9,6 +9,7 @@ from typing import Dict, Any
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.cuda.amp import autocast, GradScaler
 from torch.utils.tensorboard import SummaryWriter
 import torchvision.utils as vutils
 
@@ -46,6 +47,21 @@ class Trainer:
 
         # Setup loss functions
         self._setup_losses()
+
+        # AMP (Automatic Mixed Precision) for faster training on GPU
+        self.use_amp = self.device.type == 'cuda'
+        self.g_scaler = GradScaler(enabled=self.use_amp)
+        self.d_scaler = GradScaler(enabled=self.use_amp)
+        if self.use_amp:
+            print("Using AMP (mixed precision) for faster training")
+
+        # Save dataset metadata for reproducibility
+        train_ds = self.train_loader.dataset
+        self.dataset_meta = {
+            'attribute_columns': train_ds.attribute_columns,
+            'attr_dim': train_ds.attr_dim,
+            'indices_train': train_ds.indices.tolist(),
+        }
 
         # Training state
         self.current_epoch = 0
@@ -142,17 +158,19 @@ class Trainer:
         """Train discriminator for one step"""
         self.d_optimizer.zero_grad()
 
-        # Real samples
-        real_output = self.discriminator(edges, attributes, real_images)
+        with autocast(enabled=self.use_amp):
+            # Real samples
+            real_output = self.discriminator(edges, attributes, real_images)
 
-        # Fake samples (detached to avoid backprop through generator)
-        fake_output = self.discriminator(edges, attributes, fake_images.detach())
+            # Fake samples (detached to avoid backprop through generator)
+            fake_output = self.discriminator(edges, attributes, fake_images.detach())
 
-        # Hinge loss
-        d_loss = hinge_loss_discriminator(real_output, fake_output)
+            # Hinge loss
+            d_loss = hinge_loss_discriminator(real_output, fake_output)
 
-        d_loss.backward()
-        self.d_optimizer.step()
+        self.d_scaler.scale(d_loss).backward()
+        self.d_scaler.step(self.d_optimizer)
+        self.d_scaler.update()
 
         return {
             'd_loss': d_loss.item(),
@@ -164,35 +182,37 @@ class Trainer:
         """Train generator for one step"""
         self.g_optimizer.zero_grad()
 
-        # Generate fake images
-        fake_images = self.generator(edges, attributes)
+        with autocast(enabled=self.use_amp):
+            # Generate fake images
+            fake_images = self.generator(edges, attributes)
 
-        # Discriminator output for fake images
-        fake_output = self.discriminator(edges, attributes, fake_images)
+            # Discriminator output for fake images
+            fake_output = self.discriminator(edges, attributes, fake_images)
 
-        # Hinge loss for generator
-        g_adv_loss = hinge_loss_generator(fake_output)
+            # Hinge loss for generator
+            g_adv_loss = hinge_loss_generator(fake_output)
 
-        # L1 reconstruction loss
-        g_l1_loss = self.l1_loss(fake_images, real_images)
+            # L1 reconstruction loss
+            g_l1_loss = self.l1_loss(fake_images, real_images)
 
-        # Perceptual loss
-        g_perc_loss = self.perceptual_loss(fake_images, real_images)
+            # Perceptual loss
+            g_perc_loss = self.perceptual_loss(fake_images, real_images)
 
-        # Combined generator loss
-        g_loss = (g_adv_loss +
-                 self.args.lambda_l1 * g_l1_loss +
-                 self.args.lambda_perceptual * g_perc_loss)
+            # Combined generator loss
+            g_loss = (g_adv_loss +
+                     self.args.lambda_l1 * g_l1_loss +
+                     self.args.lambda_perceptual * g_perc_loss)
 
-        g_loss.backward()
-        self.g_optimizer.step()
+        self.g_scaler.scale(g_loss).backward()
+        self.g_scaler.step(self.g_optimizer)
+        self.g_scaler.update()
 
         return {
             'g_loss': g_loss.item(),
             'g_adv_loss': g_adv_loss.item(),
             'g_l1_loss': g_l1_loss.item(),
             'g_perc_loss': g_perc_loss.item()
-        }, fake_images
+        }, fake_images.float()
 
     def _validate(self) -> Dict[str, float]:
         """Validation loop"""
@@ -288,8 +308,11 @@ class Trainer:
             'd_optimizer_state_dict': self.d_optimizer.state_dict(),
             'g_scheduler_state_dict': self.g_scheduler.state_dict(),
             'd_scheduler_state_dict': self.d_scheduler.state_dict(),
+            'g_scaler_state_dict': self.g_scaler.state_dict(),
+            'd_scaler_state_dict': self.d_scaler.state_dict(),
             'args': self.args,
-            'attr_dim': self.attr_dim
+            'attr_dim': self.attr_dim,
+            'dataset_meta': self.dataset_meta,
         }
 
         # Save latest checkpoint
@@ -325,6 +348,17 @@ class Trainer:
             self.g_scheduler.load_state_dict(checkpoint['g_scheduler_state_dict'])
         if 'd_scheduler_state_dict' in checkpoint:
             self.d_scheduler.load_state_dict(checkpoint['d_scheduler_state_dict'])
+
+        # Restore AMP scalers
+        if 'g_scaler_state_dict' in checkpoint:
+            self.g_scaler.load_state_dict(checkpoint['g_scaler_state_dict'])
+        if 'd_scaler_state_dict' in checkpoint:
+            self.d_scaler.load_state_dict(checkpoint['d_scaler_state_dict'])
+
+        # Restore dataset metadata
+        if 'dataset_meta' in checkpoint:
+            saved_meta = checkpoint['dataset_meta']
+            print(f"  Restored {len(saved_meta.get('attribute_columns', []))} attribute columns")
 
         print(f"Resuming from epoch {self.current_epoch}")
 
