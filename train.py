@@ -76,18 +76,6 @@ class Trainer:
         """Setup data loaders"""
         print("Setting up data loaders...")
 
-        # Get first dataset to determine attribute dimension
-        from dataset import ZapposDataset
-        temp_dataset = ZapposDataset(
-            data_root=self.args.data_root,
-            image_size=self.args.image_size,
-            split='train',
-            min_attribute_freq=self.args.min_attr_freq,
-            attribute_prefixes=self.args.attr_prefixes.split(',') if self.args.attr_prefixes else None
-        )
-        self.attr_dim = temp_dataset.attr_dim
-        print(f"Attribute dimension: {self.attr_dim}")
-
         # Create data loaders
         self.train_loader, self.val_loader = create_dataloader(
             data_root=self.args.data_root,
@@ -99,6 +87,9 @@ class Trainer:
             attribute_prefixes=self.args.attr_prefixes.split(',') if self.args.attr_prefixes else None
         )
 
+        # Get attribute dimension from the dataset (no need to build a separate temp_dataset)
+        self.attr_dim = self.train_loader.dataset.attr_dim
+        print(f"Attribute dimension: {self.attr_dim}")
         print(f"Train batches: {len(self.train_loader)}")
         print(f"Val batches: {len(self.val_loader)}")
 
@@ -230,21 +221,22 @@ class Trainer:
                 attributes = attributes.to(self.device)
                 real_images = real_images.to(self.device)
 
-                # Generate fake images
-                fake_images = self.generator(edges, attributes)
+                with autocast(enabled=self.use_amp):
+                    # Generate fake images
+                    fake_images = self.generator(edges, attributes)
 
-                # Discriminator losses
-                real_output = self.discriminator(edges, attributes, real_images)
-                fake_output = self.discriminator(edges, attributes, fake_images)
-                d_loss = hinge_loss_discriminator(real_output, fake_output)
+                    # Discriminator losses
+                    real_output = self.discriminator(edges, attributes, real_images)
+                    fake_output = self.discriminator(edges, attributes, fake_images)
+                    d_loss = hinge_loss_discriminator(real_output, fake_output)
 
-                # Generator losses
-                g_adv_loss = hinge_loss_generator(fake_output)
-                g_l1_loss = self.l1_loss(fake_images, real_images)
-                g_perc_loss = self.perceptual_loss(fake_images, real_images)
-                g_loss = (g_adv_loss +
-                         self.args.lambda_l1 * g_l1_loss +
-                         self.args.lambda_perceptual * g_perc_loss)
+                    # Generator losses
+                    g_adv_loss = hinge_loss_generator(fake_output)
+                    g_l1_loss = self.l1_loss(fake_images, real_images)
+                    g_perc_loss = self.perceptual_loss(fake_images, real_images)
+                    g_loss = (g_adv_loss +
+                             self.args.lambda_l1 * g_l1_loss +
+                             self.args.lambda_perceptual * g_perc_loss)
 
                 total_g_loss += g_loss.item()
                 total_d_loss += d_loss.item()
@@ -315,14 +307,18 @@ class Trainer:
             'dataset_meta': self.dataset_meta,
         }
 
-        # Save latest checkpoint
+        # Save latest checkpoint (atomic write to prevent corruption on disconnect)
         checkpoint_path = os.path.join(self.args.checkpoint_dir, 'latest.pth')
-        torch.save(checkpoint, checkpoint_path)
+        tmp_path = checkpoint_path + '.tmp'
+        torch.save(checkpoint, tmp_path)
+        os.replace(tmp_path, checkpoint_path)
 
         # Save best checkpoint
         if is_best:
             best_path = os.path.join(self.args.checkpoint_dir, 'best.pth')
-            torch.save(checkpoint, best_path)
+            tmp_path = best_path + '.tmp'
+            torch.save(checkpoint, tmp_path)
+            os.replace(tmp_path, best_path)
 
         # Save epoch checkpoint
         if epoch % self.args.save_freq == 0:
@@ -335,7 +331,7 @@ class Trainer:
 
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
 
-        self.current_epoch = checkpoint['epoch']
+        self.current_epoch = checkpoint['epoch'] + 1  # +1 to avoid repeating the saved epoch
         self.global_step = checkpoint.get('global_step', 0)
 
         self.generator.load_state_dict(checkpoint['generator_state_dict'])
