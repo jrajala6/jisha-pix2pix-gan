@@ -57,16 +57,24 @@ class Trainer:
 
         # Save dataset metadata for reproducibility
         train_ds = self.train_loader.dataset
+        val_ds = self.val_loader.dataset
         self.dataset_meta = {
             'attribute_columns': train_ds.attribute_columns,
             'attr_dim': train_ds.attr_dim,
             'indices_train': train_ds.indices.tolist(),
+            'indices_val': val_ds.indices.tolist(),
         }
 
         # Training state
         self.current_epoch = 0
         self.global_step = 0
         self.best_loss = float('inf')
+
+        # Auto-resume from latest.pth if no explicit checkpoint given
+        latest = os.path.join(args.checkpoint_dir, 'latest.pth')
+        if args.resume_from is None and os.path.exists(latest):
+            print(f"Auto-resuming from {latest}")
+            args.resume_from = latest
 
         # Load checkpoint if resuming
         if args.resume_from:

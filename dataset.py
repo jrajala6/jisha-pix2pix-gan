@@ -306,6 +306,8 @@ def create_dataloader(
     """
 
     # Create datasets (val reuses train's attribute columns for consistency)
+    kwargs = dict(kwargs)
+    kwargs.pop('attribute_columns', None)  # Avoid duplicate kwarg
     train_dataset = ZapposDataset(
         data_root=data_root,
         image_size=image_size,
