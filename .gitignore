@@ -1,0 +1,22 @@
+# Dataset (too large for git)
+ut-zap50k-images-square/
+*.zip
+
+# Training outputs
+checkpoints/
+samples/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Mac
+.DS_Store
