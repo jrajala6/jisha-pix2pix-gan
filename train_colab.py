@@ -262,25 +262,20 @@ def main():
     else:
         print("⚠️  No GPU detected! Training will be very slow.")
 
-    # Check for existing checkpoints to resume
-    checkpoint_dir = './checkpoints'
-    resume_from = None
-
-    # First check Drive for checkpoints (Colab)
+    # Set output directories — save directly to Drive if available (survives disconnects)
     if drive_dir:
-        drive_ckpt_dir = f'{drive_dir}/checkpoints'
-        drive_ckpt = find_latest_checkpoint(drive_ckpt_dir)
-        if drive_ckpt:
-            # Copy checkpoint locally for resume
-            os.makedirs(checkpoint_dir, exist_ok=True)
-            local_copy = os.path.join(checkpoint_dir, os.path.basename(drive_ckpt))
-            shutil.copy2(drive_ckpt, local_copy)
-            resume_from = local_copy
-            print(f"  Copied from Drive: {os.path.basename(drive_ckpt)}")
+        checkpoint_dir = f'{drive_dir}/checkpoints'
+        sample_dir = f'{drive_dir}/samples'
+        log_dir = f'{drive_dir}/logs'
+        print(f"✅ Saving directly to Google Drive (disconnect-safe)")
+    else:
+        checkpoint_dir = './checkpoints'
+        sample_dir = './samples'
+        log_dir = './logs'
+        print("⚠️  Saving locally only (will be lost if session disconnects)")
 
-    # Also check local checkpoints
-    if not resume_from:
-        resume_from = find_latest_checkpoint(checkpoint_dir)
+    # Check for existing checkpoints to resume
+    resume_from = find_latest_checkpoint(checkpoint_dir)
 
     # Build training command
     cmd = [
@@ -293,6 +288,8 @@ def main():
         '--save_freq', '5',
         '--sample_freq', '5',
         '--checkpoint_dir', checkpoint_dir,
+        '--sample_dir', sample_dir,
+        '--log_dir', log_dir,
     ]
 
     if resume_from:
@@ -311,20 +308,12 @@ def main():
     except KeyboardInterrupt:
         print("\nTraining interrupted! Checkpoints are saved.")
         process.terminate()
-    finally:
-        # Sync to Drive (Colab)
-        if drive_dir:
-            print("\nSyncing to Google Drive...")
-            sync_files(checkpoint_dir, f'{drive_dir}/checkpoints', ['*.pth'])
-            sync_files('./samples', f'{drive_dir}/samples', ['*.png', '*.jpg'])
-            sync_files('./logs', f'{drive_dir}/logs', ['events*'])
-            print("✅ All outputs synced to Drive!")
 
     print("\n✅ Training complete!")
     if drive_dir:
-        print(f"  Checkpoints: {drive_dir}/checkpoints/")
-        print(f"  Samples: {drive_dir}/samples/")
-        print(f"  Logs: {drive_dir}/logs/")
+        print(f"  Checkpoints: {checkpoint_dir}/")
+        print(f"  Samples: {sample_dir}/")
+        print(f"  Logs: {log_dir}/")
 
 
 if __name__ == '__main__':
