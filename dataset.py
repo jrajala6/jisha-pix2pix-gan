@@ -31,7 +31,8 @@ class ZapposDataset(Dataset):
         min_attribute_freq: int = 100,
         attribute_prefixes: Optional[List[str]] = None,
         edge_threshold1: int = 50,
-        edge_threshold2: int = 150
+        edge_threshold2: int = 150,
+        attribute_columns: Optional[List[str]] = None
     ):
         """
         Args:
@@ -66,7 +67,7 @@ class ZapposDataset(Dataset):
         # Load and process data
         self._load_image_paths()
         self._filter_missing_images()
-        self._load_attributes(min_attribute_freq, attribute_prefixes)
+        self._load_attributes(min_attribute_freq, attribute_prefixes, attribute_columns)
         self._create_split(train_ratio)
 
         print(f"Loaded {len(self.indices)} samples for {split} split")
@@ -134,7 +135,7 @@ class ZapposDataset(Dataset):
             self.valid_indices = None
             print("All image paths verified — no missing files")
 
-    def _load_attributes(self, min_freq: int, prefixes: Optional[List[str]]):
+    def _load_attributes(self, min_freq: int, prefixes: Optional[List[str]], fixed_columns: Optional[List[str]] = None):
         """Load and filter attributes from CSV file"""
         # Look for meta-data-bin.csv in ut-zap50k-data subdirectory
         csv_path = os.path.join(self.data_root, 'ut-zap50k-data', 'meta-data-bin.csv')
@@ -160,6 +161,13 @@ class ZapposDataset(Dataset):
             min_len = min(n_images, n_attributes)
             self.image_paths = self.image_paths[:min_len]
             self.attributes_df = self.attributes_df.iloc[:min_len]
+
+        # Use fixed columns if provided (e.g. val reusing train's columns)
+        if fixed_columns is not None:
+            self.attribute_columns = fixed_columns
+            self.attr_dim = len(self.attribute_columns)
+            print(f"Using {self.attr_dim} pre-set attribute columns")
+            return
 
         # Get all columns except CID (first column)
         all_columns = list(self.attributes_df.columns)[1:]  # Skip first column (CID)
@@ -297,7 +305,7 @@ def create_dataloader(
         train_loader, val_loader
     """
 
-    # Create datasets
+    # Create datasets (val reuses train's attribute columns for consistency)
     train_dataset = ZapposDataset(
         data_root=data_root,
         image_size=image_size,
@@ -311,6 +319,7 @@ def create_dataloader(
         image_size=image_size,
         split='val',
         train_ratio=train_ratio,
+        attribute_columns=train_dataset.attribute_columns,
         **kwargs
     )
 
