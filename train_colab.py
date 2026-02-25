@@ -32,18 +32,23 @@ def detect_platform():
 
 
 def setup_colab():
-    """Mount Google Drive and set up workspace"""
-    from google.colab import drive
-    drive.mount('/content/drive')
+    """Set up Google Drive workspace (Drive must be mounted from notebook first)"""
+    drive_path = '/content/drive/MyDrive'
 
-    # Create persistent directory on Drive
-    drive_dir = '/content/drive/MyDrive/pix2pix-gan'
-    os.makedirs(drive_dir, exist_ok=True)
-    os.makedirs(f'{drive_dir}/checkpoints', exist_ok=True)
-    os.makedirs(f'{drive_dir}/samples', exist_ok=True)
-    os.makedirs(f'{drive_dir}/logs', exist_ok=True)
-
-    return drive_dir
+    if os.path.exists(drive_path):
+        print("  ✅ Google Drive is mounted!")
+        drive_dir = f'{drive_path}/pix2pix-gan'
+        os.makedirs(drive_dir, exist_ok=True)
+        os.makedirs(f'{drive_dir}/checkpoints', exist_ok=True)
+        os.makedirs(f'{drive_dir}/samples', exist_ok=True)
+        os.makedirs(f'{drive_dir}/logs', exist_ok=True)
+        return drive_dir
+    else:
+        print("  ⚠️  Google Drive not mounted. Checkpoints will be saved locally only.")
+        print("  To save to Drive, run this in a notebook cell BEFORE this script:")
+        print("    from google.colab import drive")
+        print("    drive.mount('/content/drive')")
+        return None
 
 
 def setup_kaggle():
