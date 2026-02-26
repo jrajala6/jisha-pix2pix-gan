@@ -225,6 +225,18 @@ def run_inference(
     # Initialize inference class
     inferencer = ConditionalGANInference(checkpoint_path)
 
+    attr_cols = inferencer.checkpoint["dataset_meta"]["attribute_columns"]
+
+    val_dataset = ZapposDataset(
+        data_root=data_root,
+        image_size=inferencer.args.image_size,
+        split='val',
+        train_ratio=inferencer.args.train_ratio,
+        min_attribute_freq=inferencer.args.min_attr_freq,
+        attribute_prefixes=inferencer.args.attr_prefixes.split(',') if inferencer.args.attr_prefixes else None,
+        attribute_columns=attr_cols,
+    )
+
     # Load validation dataset
     val_dataset = ZapposDataset(
         data_root=data_root,
@@ -322,6 +334,18 @@ def run_attribute_manipulation(
     # Initialize inference class
     inferencer = ConditionalGANInference(checkpoint_path)
 
+    attr_cols = inferencer.checkpoint["dataset_meta"]["attribute_columns"]
+
+    val_dataset = ZapposDataset(
+        data_root=data_root,
+        image_size=inferencer.args.image_size,
+        split='val',
+        train_ratio=inferencer.args.train_ratio,
+        min_attribute_freq=inferencer.args.min_attr_freq,
+        attribute_prefixes =inferencer.args.attr_prefixes.split(',') if inferencer.args.attr_prefixes else None,
+        attribute_columns=attr_cols,
+    )
+
     # Load validation dataset
     val_dataset = ZapposDataset(
         data_root=data_root,
@@ -383,6 +407,18 @@ def run_attribute_interpolation(
 
     # Initialize inference class
     inferencer = ConditionalGANInference(checkpoint_path)
+
+    attr_cols = inferencer.checkpoint["dataset_meta"]["attribute_columns"]
+
+    val_dataset = ZapposDataset(
+        data_root=data_root,
+        image_size=inferencer.args.image_size,
+        split='val',
+        train_ratio=inferencer.args.train_ratio,
+        min_attribute_freq=inferencer.args.min_attr_freq,
+        attribute_prefixes=inferencer.args.attr_prefixes.split(',') if inferencer.args.attr_prefixes else None,
+        attribute_columns=attr_cols,
+    )
 
     # Load validation dataset
     val_dataset = ZapposDataset(
