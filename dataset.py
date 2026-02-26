@@ -305,14 +305,16 @@ def create_dataloader(
         train_loader, val_loader
     """
 
-    # Create datasets (val reuses train's attribute columns for consistency)
+    # Create datasets (val always reuses train's attribute columns for consistency)
     kwargs = dict(kwargs)
-    kwargs.pop('attribute_columns', None)  # Avoid duplicate kwarg
+    forced_cols = kwargs.pop('attribute_columns', None)
+
     train_dataset = ZapposDataset(
         data_root=data_root,
         image_size=image_size,
         split='train',
         train_ratio=train_ratio,
+        attribute_columns=forced_cols,  # None on first run, restored columns on resume
         **kwargs
     )
 
@@ -321,7 +323,7 @@ def create_dataloader(
         image_size=image_size,
         split='val',
         train_ratio=train_ratio,
-        attribute_columns=train_dataset.attribute_columns,
+        attribute_columns=train_dataset.attribute_columns,  # always inherit from train
         **kwargs
     )
 
