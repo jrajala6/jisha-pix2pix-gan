@@ -4,7 +4,7 @@ import torch
 import torchvision.utils as vutils
 
 from dataset import ZapposDataset
-from models import Generator
+from models_film import Generator
 
 
 def set_attrs_by_name(attrs: torch.Tensor, name_to_idx: dict, edits: dict) -> torch.Tensor:
