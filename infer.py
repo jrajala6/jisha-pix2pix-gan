@@ -277,9 +277,9 @@ def run_inference(
             batch_size_actual = edges.shape[0]
             remaining = min(batch_size_actual, num_samples - samples_collected)
 
-            all_edges.append(edges[:remaining])
-            all_real.append(real_images[:remaining])
-            all_generated.append(fake_images[:remaining])
+            all_edges.append(edges[:remaining].cpu())
+            all_real.append(real_images[:remaining].cpu())
+            all_generated.append(fake_images[:remaining].cpu())
 
             samples_collected += remaining
 
