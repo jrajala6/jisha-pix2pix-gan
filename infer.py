@@ -27,7 +27,7 @@ class ConditionalGANInference:
         print(f"Using device: {self.device}")
 
         # Load checkpoint
-        self.checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        self.checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
         self.args = self.checkpoint['args']
         self.attr_dim = self.checkpoint['attr_dim']
 
